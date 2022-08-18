@@ -1,0 +1,438 @@
+library(quantmod)
+library(tseries)
+library(fBasics)
+library(fGarch)
+library(rugarch)
+library(tidyverse)
+library(PerformanceAnalytics)
+
+#Definindo os períodos das amostras:
+
+# PERÍODO DA AMOSTRA
+
+startdate.in <- as.Date("2018-12-28")
+enddate.in <- as.Date("2021-10-31")
+
+# PERÍODO FORA DA AMOSTRA 
+
+startdate.out <- as.Date("2011-10-31")
+enddate.out <- as.Date("2021-10-31")
+
+# Coletando os dados:
+
+isus11.in <- quantmod::getSymbols("ISUS11.SA", src = "yahoo",
+                                  from = startdate.in, to = enddate.in, 
+                                  auto.assign = FALSE)
+
+isus11.out <- quantmod::getSymbols("ISUS11.SA", src = "yahoo",
+                                  from = startdate.out, to = enddate.out, 
+                                  auto.assign = FALSE)
+
+Dadosisus.in = isus11.in$ISUS11.SA.Adjusted
+Dadosisus.out = isus11.out$ISUS11.SA.Adjusted
+
+Retornosisus.in = diff(log(Dadosisus.in))
+Retornosisus.out = diff(log(Dadosisus.out))
+
+#### IBOV
+ibov.in <- quantmod::getSymbols("^BVSP", src = "yahoo", from = startdate.in,
+                             to = enddate.in, auto.assign = FALSE)
+
+ibov.out <- quantmod::getSymbols("^BVSP", src = "yahoo", from = startdate.out,
+                                to = enddate.out, auto.assign = FALSE)
+
+Dadosibov.in = ibov.in$BVSP.Adjusted
+Dadosibov.out = ibov.out$BVSP.Adjusted
+
+Retornosibov.in = diff(log(Dadosibov.in))
+Retornosibov.out = diff(log(Dadosibov.out))
+
+
+### Estatísticas descritivas - parte amostra
+
+plot.ts(Dadosisus.in, ylab = "Preço (R$)", xlab = "Período")
+abline(h=mean(na.omit(Dadosisus.in)),col="blue")
+
+plot.ts(Retornosisus.in, ylab = "Retorno", xlab = "Período")
+abline(h=mean(na.omit(Retornosisus.in)),col="blue")
+
+kpss.test(Retornosisus.in)
+
+summary(Retornosisus.in)
+basicStats(Retornosisus.out)
+
+plot(density(na.omit(Retornosisus.in)))
+tseries::jarque.bera.test(na.omit(Retornosisus.in))
+skewness(na.omit(Retornosisus.in))
+kurtosis(na.omit(Retornosisus.in))
+acf(na.omit(Retornosisus.in))
+
+kpss.test(Retornosibov.in)
+basicStats(Retornosibov.in)
+tseries::jarque.bera.test(na.omit(Retornosibov.in))
+
+############################################ ISE 5%
+
+dist1 = "norm"
+dist2 = "std"  # dist t 
+dist3 = "sstd" # dist t assimetrica
+alpha1 = 0.05
+alpha2 = 0.01
+
+mod = "sGARCH"
+Solver <- c("hybrid")
+N1 = length(Retornosibov.in)
+N2 = length(Retornosibov.out)
+#Como as duas variáveis possuem a mesma quantidade de dados, só criei dois N ao
+# invés de 4
+WE = 250
+
+Realibov.in = Retornosibov.in[(WE+1):N1]
+Realisus.in = Retornosisus.in[(WE+1):N1]
+
+Realibov.out = Retornosibov.out[(WE+1):N2]
+Realisus.out = Retornosisus.out[(WE+1):N2]
+
+MeasuresVaR.ibov.in <- matrix(nrow = N1 - WE, ncol = 4) 
+MeasuresES.ibov.in <- matrix(nrow = N1 - WE, ncol = 4) 
+
+MeasuresVaR.isus.in <- matrix(nrow = N1 - WE, ncol = 4) 
+MeasuresES.isus.in <- matrix(nrow = N1 - WE, ncol = 4)
+
+MeasuresVaR.ibov.out <- matrix(nrow = N2 - WE, ncol = 1) 
+MeasuresES.ibov.out <- matrix(nrow = N2 - WE, ncol = 1) 
+
+MeasuresVaR.isus.out <- matrix(nrow = N2 - WE, ncol = 1) 
+MeasuresES.isus.out <- matrix(nrow = N2 - WE, ncol = 1) 
+
+colnames(MeasuresVaR.ibov.in) <- c("HS","norm","t","tstd")
+colnames(MeasuresES.ibov.in) <- c("HS","norm","t","tstd")
+colnames(MeasuresVaR.isus.in) <- c("HS","norm","t","tstd")
+colnames(MeasuresES.isus.in) <- c("HS","norm","t","tstd")
+colnames(MeasuresVaR.ibov.out) <- c("norm")
+colnames(MeasuresES.ibov.out) <- c("norm")
+colnames(MeasuresVaR.isus.out) <- c("norm")
+colnames(MeasuresES.isus.out) <- c("norm")
+
+#### ESTIMAÇÃO DENTRO DA AMOSTRA
+
+for (t in (WE + 1):N1){
+  t1 <- t-WE
+  t2 <- t-1
+
+  window.ibovin <- na.omit(as.numeric(Retornosibov.in[t1:t2])) 
+  window.isusin <- na.omit(as.numeric(Retornosisus.in[t1:t2])) 
+  
+############################################ IBOV DENTRO DA AMOSTRA
+  
+  ######## VAR HS
+  MeasuresVaR.ibov.in[t1,1] <- -quantile(window.ibovin,alpha1)
+  MeasuresES.ibov.in[t1,1] = -mean(window.ibovin[window.ibovin < 
+                                           quantile(window.ibovin,alpha1)])
+  
+  
+  ########## GARCH norm
+  mod.garch <- try(ugarchspec(variance.model=list(model = mod,
+                                                  garchOrder = c(1,1)),
+                              mean.model=list(armaOrder=c(1,0)),
+                              distribution.model = dist1), silent=TRUE)
+  
+  fit.garch <- try(ugarchfit(mod.garch, data = window.ibovin,
+                             solver = Solver), silent=TRUE)
+  
+  pred.garch <- try(ugarchforecast(fit.garch, data = window.ibovin,
+                                   n.ahead=1), silent=TRUE)
+  
+  mu <- fitted(pred.garch)
+  sig <- sigma(pred.garch)
+  
+  func1 <- function(x) qdist(dist1, p=x, mu = 0, sigma = 1)
+  Int1 <- integrate(func1, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.ibov.in[t1,2] <- - (mu + sig*func1(alpha1))
+  MeasuresES.ibov.in[t1,2] = -(mu + sig*Int1)
+  
+  ######## GARCH t
+  
+  mod.garch2 <- try(ugarchspec(variance.model=list(model = mod,
+                                                   garchOrder = c(1,1)),
+                               mean.model=list(armaOrder=c(1,0)),
+                               distribution.model = dist2), silent=TRUE)
+  
+  fit.garch2 <- try(ugarchfit(mod.garch2, data = window.ibovin,
+                              solver = Solver), silent=TRUE)
+  
+  pred.garch2 <- try(ugarchforecast(fit.garch2, 
+                                    data=window.ibovin, n.ahead=1), silent=TRUE)
+  
+  t.nu <- coef(fit.garch2)[6]
+  mu2 <- fitted(pred.garch2)
+  sig2 <- sigma(pred.garch2)
+  
+  func2 <- function(x) qdist(dist2, p=x, mu = 0, sigma = 1, 
+                             shape =  t.nu)
+  
+  Int2 <- integrate(func2, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.ibov.in[t1,3] = -(mu2+ sig2*qdist(dist2, p=alpha1, mu = 0, 
+                                                sigma = 1, shape =  t.nu))
+  
+  MeasuresES.ibov.in[t1,3] = -(mu2 + sig2*Int2)
+  
+  
+  ################### GARCH t std
+  
+  mod.garch3 <- try(ugarchspec(variance.model=list(model = mod,
+                                                   garchOrder = c(1,1)),
+                               mean.model=list(armaOrder=c(1,0)),
+                               distribution.model = dist3), silent=TRUE)
+  
+  fit.garch3 <- try(ugarchfit(mod.garch3, data = window.ibovin,
+                              solver = Solver), silent=TRUE)
+  
+  pred.garch3 <- try(ugarchforecast(fit.garch3, 
+                                    data=window.ibovin, n.ahead=1), silent=TRUE)
+  
+  mu3 <- fitted(pred.garch3)
+  sig3 <- sigma(pred.garch3)
+  t.nu3 <- coef(fit.garch3)[7]
+  t.skew3 <- coef(fit.garch3)[6]
+  
+  func3 <- function(x) qdist(dist3, p=x, mu = 0, sigma = 1, 
+                             shape =  t.nu3)
+  
+  Int3 <- integrate(func3, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.ibov.in[t1,4] = -(mu3+ sig3*qdist(dist3, p=alpha1, mu = 0, 
+                                                sigma = 1, 
+                                        shape =  t.nu3, skew = t.skew3))
+  MeasuresES.ibov.in[t1,4] =  -(mu3 + sig3*Int3)
+  
+  
+  ############################################ ISE DENTRO DA AMOSTRA
+  
+  ######## VAR HS
+  
+  MeasuresVaR.isus.in[t1,1] <- -quantile(window.isusin,alpha1)
+  MeasuresES.isus.in[t1,1] = -mean(window.isusin[window.isusin < 
+                                                   quantile(window.isusin,
+                                                            alpha1)])
+  
+  
+  ########## GARCH norm
+  mod.garch4 <- try(ugarchspec(variance.model=list(model = mod,
+                                                  garchOrder = c(1,1)),
+                              mean.model=list(armaOrder=c(1,0)),
+                              distribution.model = dist1), silent=TRUE)
+  
+  fit.garch4 <- try(ugarchfit(mod.garch4, data = window.isusin,
+                             solver = Solver), silent=TRUE)
+  
+  pred.garch4 <- try(ugarchforecast(fit.garch4, data = window.isusin,
+                                   n.ahead=1), silent=TRUE)
+  
+  mu4 <- fitted(pred.garch4)
+  sig4 <- sigma(pred.garch4)
+  
+  func4 <- function(x) qdist(dist1, p=x, mu = 0, sigma = 1)
+  Int4 <- integrate(func4, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.isus.in[t1,2] <- - (mu4 + sig4*func4(alpha1))
+  MeasuresES.isus.in[t1,2] = -(mu4 + sig4*Int4)
+  
+  ######## GARCH t
+  
+  mod.garch5 <- try(ugarchspec(variance.model=list(model = mod,
+                                                   garchOrder = c(1,1)),
+                               mean.model=list(armaOrder=c(1,0)),
+                               distribution.model = dist2), silent=TRUE)
+  
+  fit.garch5 <- try(ugarchfit(mod.garch5, data = window.isusin,
+                              solver = Solver), silent=TRUE)
+  
+  pred.garch5 <- try(ugarchforecast(fit.garch5, 
+                                    data=window.isusin, n.ahead=1), silent=TRUE)
+  
+  t.nu5 <- coef(fit.garch5)[6]
+  mu5 <- fitted(pred.garch5)
+  sig5 <- sigma(pred.garch5)
+  
+  func5 <- function(x) qdist(dist2, p=x, mu = 0, sigma = 1, 
+                             shape =  t.nu5)
+  
+  Int5 <- integrate(func5, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.isus.in[t1,3] = -(mu5+ sig5*qdist(dist2, p=alpha1, mu = 0, 
+                                                sigma = 1, shape =  t.nu5))
+  
+  MeasuresES.isus.in[t1,3] = -(mu5 + sig5*Int5)
+  
+  
+  ################### GARCH t std
+  
+  mod.garch6 <- try(ugarchspec(variance.model=list(model = mod,
+                                                   garchOrder = c(1,1)),
+                               mean.model=list(armaOrder=c(1,0)),
+                               distribution.model = dist3), silent=TRUE)
+  
+  fit.garch6 <- try(ugarchfit(mod.garch6, data = window.isusin,
+                              solver = Solver), silent=TRUE)
+  
+  pred.garch6 <- try(ugarchforecast(fit.garch6, 
+                                    data=window.isusin, n.ahead=1), silent=TRUE)
+  
+  mu6 <- fitted(pred.garch6)
+  sig6 <- sigma(pred.garch6)
+  t.nu6 <- coef(fit.garch6)[7]
+  t.skew6 <- coef(fit.garch6)[6]
+  
+  func6 <- function(x) qdist(dist3, p=x, mu = 0, sigma = 1, 
+                             shape =  t.nu6)
+  
+  Int6 <- integrate(func6, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.isus.in[t1,4] = -(mu6+ sig6*qdist(dist3, p=alpha1, mu = 0, 
+                                                sigma = 1, 
+                                                shape =  t.nu6, skew = t.skew6))
+  MeasuresES.isus.in[t1,4] =  -(mu6 + sig6*Int6)
+  
+} 
+
+
+MeasuresVaR.ibov.in[t1,1]
+MeasuresVaR.ibov.in[t1,2]
+MeasuresVaR.ibov.in[t1,3]
+MeasuresVaR.ibov.in[t1,4]
+MeasuresES.ibov.in[t1,1]
+MeasuresES.ibov.in[t1,2]
+MeasuresES.ibov.in[t1,3]
+MeasuresES.ibov.in[t1,4]
+
+#### Backtesting:
+
+VaRtest.ibov.in <- matrix(nrow = length(colnames(MeasuresVaR.ibov.in)),ncol=2)
+for (i in 1:length(colnames(MeasuresVaR.ibov.in))) {
+  
+  as <- rugarch::VaRTest(alpha = alpha1, Realibov.in, -MeasuresVaR.ibov.in[,i]) 
+  VaRtest.ibov.in[i,1] <- as$uc.Decision
+  VaRtest.ibov.in[i,2] <- as$cc.Decision
+}
+rownames(VaRtest.ibov.in) <- colnames(VaRtest.ibov.in)
+colnames(VaRtest.ibov.in) <- c("uc.Decision","cc.Decision")
+
+
+
+VaRtest.isus.in <- matrix(nrow = length(colnames(MeasuresVaR.isus.in)),ncol=2)
+for (i in 1:length(colnames(MeasuresVaR.isus.in))) {
+  
+  as <- rugarch::VaRTest(alpha = alpha1, Realisus.in, -MeasuresVaR.isus.in[,i]) 
+  VaRtest.isus.in[i,1] <- as$uc.Decision
+  VaRtest.isus.in[i,2] <- as$cc.Decision
+}
+rownames(VaRtest.isus.in) <- colnames(VaRtest.isus.in)
+colnames(VaRtest.isus.in) <- c("uc.Decision","cc.Decision")
+
+
+
+### Score function:
+
+ScoreVaR <- function(p,x,Y) {
+  y = -Y
+  N <- length(x)
+  Cont <- rep(NA,N)
+  for(i in 1:N){
+    Cont[i] <- p*max(x[i]-y[i],0)+(1-p)*max(y[i]-x[i],0)}
+  
+  Score <- sum(Cont)/N
+  return(Score)
+  
+}
+
+ScoreVaR(0.05,Realisus.in,MeasuresVaR.isus.in[,1])
+ScoreVaR(0.05,Realisus.in,MeasuresVaR.isus.in[,2])
+ScoreVaR(0.05,Realisus.in,MeasuresVaR.isus.in[,3])
+ScoreVaR(0.05,Realisus.in,MeasuresVaR.isus.in[,4])
+
+# Testando as diferenças:
+
+wilcox.test(MeasuresVaR.ibov.in, MeasuresVaR.isus.in, alternative = "two.sided",
+                        exact = FALSE, correct = FALSE, conf.level = 0.95)
+
+###Sharpe:
+
+Sharpe1 = SharpeRatio(Retornosibov.in, Rf=.00034749, FUN="StdDev") 
+Sharpe2 = SharpeRatio(Retornosibov.in, Rf=.00034749, FUN="VaR")
+
+Sharpe3 = SharpeRatio(Retornosisus.in, Rf=.00034749, FUN="StdDev") 
+Sharpe4 = SharpeRatio(Retornosisus.in, Rf=.00034749, FUN="VaR")
+
+wilcox.test(Sharpe1, Sharpe3, alternative = "two.sided",
+            exact = FALSE, correct = FALSE, conf.level = 0.95)
+
+#### ESTIMAÇÃO FORA DA AMOSTRA
+
+for (t in (WE + 1):N2){
+  t1 <- t-WE
+  t2 <- t-1
+  
+  window.ibovout <- na.omit(as.numeric(Retornosibov.out[t1:t2])) 
+  window.isusout <- na.omit(as.numeric(Retornosisus.out[t1:t2])) 
+  
+  ############################################ IBOV FORA DA AMOSTRA
+  
+  
+  ########## GARCH norm
+  mod.garch7 <- try(ugarchspec(variance.model=list(model = mod,
+                                                  garchOrder = c(1,1)),
+                              mean.model=list(armaOrder=c(1,0)),
+                              distribution.model = dist1), silent=TRUE)
+  
+  fit.garch7 <- try(ugarchfit(mod.garch7, data = window.ibovout,
+                             solver = Solver), silent=TRUE)
+  
+  pred.garch7 <- try(ugarchforecast(fit.garch7, data = window.ibovout,
+                                   n.ahead=1), silent=TRUE)
+  
+  mu7 <- fitted(pred.garch7)
+  sig7 <- sigma(pred.garch7)
+  
+  func7 <- function(x) qdist(dist1, p=x, mu = 0, sigma = 1)
+  Int7 <- integrate(func7, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.ibov.out[t1,1] <- - (mu7 + sig7*func7(alpha1))
+  MeasuresES.ibov.out[t1,1] = -(mu7 + sig7*Int7)
+  
+ 
+  ############################################ ISE FORA DA AMOSTRA
+  
+  
+  ########## GARCH norm
+  mod.garch10 <- try(ugarchspec(variance.model=list(model = mod,
+                                                   garchOrder = c(1,1)),
+                               mean.model=list(armaOrder=c(1,0)),
+                               distribution.model = dist1), silent=TRUE)
+  
+  fit.garch10 <- try(ugarchfit(mod.garch10, data = window.isusout,
+                              solver = Solver), silent=TRUE)
+  
+  pred.garch10 <- try(ugarchforecast(fit.garch10, data = window.isusout,
+                                    n.ahead=1), silent=TRUE)
+  
+  mu10 <- fitted(pred.garch10)
+  sig10 <- sigma(pred.garch10)
+  
+  func10 <- function(x) qdist(dist1, p=x, mu = 0, sigma = 1)
+  Int10 <- integrate(func10, 0, alpha1)$value/alpha1
+  
+  MeasuresVaR.isus.out[t1,1] <- - (mu10 + sig10*func10(alpha1))
+  MeasuresES.isus.out[t1,1] = -(mu10 + sig10*Int10)
+  
+} 
+
+basicStats(Retornosibov.in)
+basicStats(Retornosisus.out)
+
+
+wilcox.test(Retornosisus.in, Retornosisus.out, alternative = 
+              "two.sided",
+            exact = FALSE, correct = FALSE, conf.level = 0.95)
