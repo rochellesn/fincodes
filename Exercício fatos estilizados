@@ -1,0 +1,84 @@
+
+library(quantmod)
+library(tseries)
+library(fBasics)
+library(fGarch)
+library(rugarch)
+
+######################################### EXERCÍCIO 1
+
+# Coletando os dados: 
+eter3 <- quantmod::getSymbols("ETER3.SA", src = "yahoo", auto.assign = FALSE)
+Dados = eter3$ETER3.SA.Adjusted
+
+plot.ts(Dados, ylab = "Preço (R$)", xlab = "Período")
+abline(h=mean(na.omit(Dados)),col="blue")
+# a análise visual indica que a série não é estacionária, o que é confirmado pelo teste kpss:
+
+kpss.test(Dados)
+
+# calculando os retornos:
+
+Retornos = diff(log(Dados))
+plot.ts(Retornos, ylab = "Preço (R$)", xlab = "Período")
+abline(h=mean(na.omit(Retornos)),col="blue")
+kpss.test(Retornos)
+
+### FATO 1: MÉDIA DOS RETORNOS PRÓXIMA A ZERO
+
+# É possível verificar pelo gráfico acima que o fato é válido. Confirmando:
+summary(Dados)
+summary(Retornos)
+
+### FATO 2: BAIXA CORRELAÇÃO DOS RETORNOS
+
+acf(na.omit(Retornos))
+# O primeiro lag representa a autocorrelação de x_t com x_t, por isso igual a 1. Nos demais lags percebemos que existem "tracinhos" fora da linha pontilhada, 
+# logo rejeitamos a hipótese nula de que não existe autocorrelação significativa.
+# No entanto, como são poucos "tracinhos" fora da linha pontilhada, suspeitamos que a autocorrelação seja baixa. 
+# Verificando isso pelo teste ljung-box:
+
+Box.test(Retornos, lag = 10, type = c("Ljung-Box"), fitdf = 0)
+
+# A hipótese nula do teste é que a autocorrelação seja igual a zero para 10 lags passados e a hipótese alternativa é de que a correlação é diferente de zero. 
+# Por convenção da literatura utilizamos 10 lags, dado que apenas dados do passado recente acabam influenciando o preço atual. 
+
+
+### FATO 3: QUADRADOS DOS RETORNOS APRESENTAM MAIOR AUTOCORRELAÇÃO DO QUE QUANDO COMPARAMOS COM O RETORNO SEM ELEVAR AO QUADRADO
+
+acf(na.omit(Retornos^2))
+
+Box.test(Retornos^2, lag = 10, type = c("Ljung-Box"), fitdf = 0)
+
+# Ao elevarmos os retornos ao quadrado obtemos a volatilidade da série. O fato de que a autocorrelação é maior quando elevamos os retornos ao quadrado indica
+# que a volatilidade do ativo é mais dependente dos dados passados do que seus retornos. Ainda, essa dependência dos dados passados é um indício de 
+# heteroscedasticidade.
+
+### FATO 4: CLUSTERS DE VOLATILIDADE
+
+# Retomando o gráfico dos retornos, podemos verificar a existência de períodos de alta volatilidade seguidos de períodos de baixa volatilidade. É possível 
+# notar ainda que o período atual tem uma volatilidade maior, o que impactará nos resultados dos diferentes métodos de previsão de risco.
+
+plot.ts(Retornos, ylab = "Preço (R$)", xlab = "Período")
+abline(h=mean(na.omit(Retornos)),col="blue")
+
+### FATO 5: DISTRIBUIÇÃO DOS RETORNOS NÃO É NORMAL
+
+tseries::jarque.bera.test(na.omit(Retornos))
+plot(density(na.omit(Retornos)))
+
+# O teste jarque bera assume como hipótese nula a normalidade e como hipótese alternativa a não normalidade. O teste verifica se a curtose é diferente de 3
+# e a assimetria é diferente de zero, e se uma das hipóteses não for satisfeita então rejeitamos a hipótese de normalidade.  
+# Tanto pelo resultado do teste quanto pela análise visual da distribuição dos dados, verificamos que, de fato, os dados não seguem uma distribuição normal.
+
+
+### FATOS 6 E 7: ASSIMETRIA E EXCESSO DE CURTOSE
+
+skewness(na.omit(Retornos))
+kurtosis(na.omit(Retornos))
+
+# Na distribuição normal temos que assimetria = 0 e curtose = 3. Verificamos primeiramente que o o excesso de curtose da série é bastante elevado. 
+# Isso implica que a distribuição dos dados tenha picos mais altos e caudas pesadas, o que significa que os resultados são mais extremos do que os obtidos
+# pela distribuição normal. A implicação desse resultado é que aumenta a probabilidade de o mercado não se comportar conforme o esperado. Já a 
+# assimetria nos sinaliza como o mercado reage às notícias, indicando que notícias negativas têm um impacto maior nos retornos do que as notícias 
+# positivas.
